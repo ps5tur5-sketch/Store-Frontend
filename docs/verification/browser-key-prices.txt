@@ -1,0 +1,11 @@
+{
+  "passed": true,
+  "checks": [
+    "individual key prices responsive 360/390/768/1440",
+    "two keys of one SKU priced at 1 and 2 via UI; independent pause, search, reload, polling draft preservation",
+    "buyer chooses two real offers and receives exact keys for 3; reserved keys locked; seller income/profit 3 persisted"
+  ],
+  "browser_errors": [],
+  "seller": "keyprice_seller_mtt0a9yp",
+  "order": "chk_9bdc56dc8c764923b30f240b8b55d606"
+}

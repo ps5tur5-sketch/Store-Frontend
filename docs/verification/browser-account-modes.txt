@@ -1,0 +1,15 @@
+{
+  "passed": true,
+  "username": "dual_mtsx872a",
+  "checks": [
+    "buyer registration with seller return URL opens activation, not an access error",
+    "become seller with nickname only",
+    "same user ID and session",
+    "balance and purchases preserved",
+    "buy/sell navigation",
+    "wrong password handled without losing form",
+    "same account login and reload restore both capabilities",
+    "mobile account layout"
+  ],
+  "browser_errors": []
+}

@@ -1,0 +1,34 @@
+{
+  "passed": true,
+  "checks": [
+    "lot split form responsive 360/390/768/1440",
+    "1000 uploaded keys split through UI into 200 at 100, 400 at 150, 400 at 200; reload preserves all lots",
+    "seller lot cards responsive 360/390/768/1440",
+    "cart three lots responsive 360/390/768/1440",
+    "three lots remain separate in cart, quantity editing and checkout; 3 reservations and 3 distinct issued keys",
+    "changing lot price to 999 leaves paid prices 100/150/200 and profit 330 intact"
+  ],
+  "browser_errors": [],
+  "seller": "lots_seller_mtt06i3c",
+  "order": "chk_7b03cc909e5d4ed380df93faef307201",
+  "lots": [
+    {
+      "id": "lot_387a3be2e977409c8fe647a9d6280dad",
+      "name": "Партия 1",
+      "price": 100,
+      "initial_quantity": 200
+    },
+    {
+      "id": "lot_6bfd4a6b09c94c72aebe129426324277",
+      "name": "Партия 2",
+      "price": 150,
+      "initial_quantity": 400
+    },
+    {
+      "id": "lot_bc6546758fab46baa65748913797f95e",
+      "name": "Партия 3",
+      "price": 200,
+      "initial_quantity": 400
+    }
+  ]
+}

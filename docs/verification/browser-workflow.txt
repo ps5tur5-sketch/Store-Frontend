@@ -1,0 +1,28 @@
+seller stock ready
+buyer registered
+checkout ready
+buyer review and chat ready
+seller chat ready
+{
+  "passed": true,
+  "buyer": "buyer_mtt0a9z3",
+  "order_id": "ord_e6768ec0bfab4cacb0fc2369858feed3",
+  "roles": [
+    "buyer",
+    "seller",
+    "admin"
+  ],
+  "checks": [
+    "seller stock",
+    "buyer checkout",
+    "verified 5 stars",
+    "buyer/seller chat",
+    "admin refund",
+    "key hidden",
+    "wallet restored",
+    "chat closed",
+    "ban revokes session",
+    "unban restores login"
+  ],
+  "browser_errors": []
+}
