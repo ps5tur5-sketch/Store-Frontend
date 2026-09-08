@@ -1,0 +1,25 @@
+{
+  "passed": true,
+  "checks": [
+    "public seller registration, own products by default, price, stock and procurement cost",
+    "pending checkout survives reload",
+    "SBP checkout responsive",
+    "SBP failure/retry, exact seller price/key, no wallet debit",
+    "seller sales and profit responsive",
+    "seller sees the bought product, buyer, fixed price 475, procurement 200 and profit 275",
+    "crypto checkout responsive",
+    "crypto payment and automatic wallet refund",
+    "wallet and payments responsive",
+    "wallet top-up and database payment history",
+    "wallet purchase after top-up",
+    "refund reverses seller income and retains procurement loss"
+  ],
+  "browser_errors": [],
+  "seller": "seller_mtt07jc6",
+  "buyer": "buyer_mtt07jc6",
+  "orders": [
+    "chk_e2bb73ee70054e1ea6416860b5394a00",
+    "chk_3a6c490524c84745a19cd914744461c1",
+    "chk_daf0bb5ed93f45deb2dcd09c6eb0584d"
+  ]
+}

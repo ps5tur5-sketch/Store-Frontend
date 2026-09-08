@@ -1,0 +1,180 @@
+{
+  "passed": true,
+  "viewports": [
+    {
+      "route": "/",
+      "width": 360,
+      "scroll": 360,
+      "broken": []
+    },
+    {
+      "route": "/product/STEAM-TOPUP-500",
+      "width": 360,
+      "scroll": 360,
+      "broken": []
+    },
+    {
+      "route": "/account",
+      "width": 360,
+      "scroll": 360,
+      "broken": []
+    },
+    {
+      "route": "/cart",
+      "width": 360,
+      "scroll": 360,
+      "broken": []
+    },
+    {
+      "route": "/seller/A",
+      "width": 360,
+      "scroll": 360,
+      "broken": []
+    },
+    {
+      "route": "/",
+      "width": 390,
+      "scroll": 390,
+      "broken": []
+    },
+    {
+      "route": "/product/STEAM-TOPUP-500",
+      "width": 390,
+      "scroll": 390,
+      "broken": []
+    },
+    {
+      "route": "/account",
+      "width": 390,
+      "scroll": 390,
+      "broken": []
+    },
+    {
+      "route": "/cart",
+      "width": 390,
+      "scroll": 390,
+      "broken": []
+    },
+    {
+      "route": "/seller/A",
+      "width": 390,
+      "scroll": 390,
+      "broken": []
+    },
+    {
+      "route": "/",
+      "width": 768,
+      "scroll": 768,
+      "broken": []
+    },
+    {
+      "route": "/product/STEAM-TOPUP-500",
+      "width": 768,
+      "scroll": 768,
+      "broken": []
+    },
+    {
+      "route": "/account",
+      "width": 768,
+      "scroll": 768,
+      "broken": []
+    },
+    {
+      "route": "/cart",
+      "width": 768,
+      "scroll": 768,
+      "broken": []
+    },
+    {
+      "route": "/seller/A",
+      "width": 768,
+      "scroll": 768,
+      "broken": []
+    },
+    {
+      "route": "/",
+      "width": 1440,
+      "scroll": 1440,
+      "broken": []
+    },
+    {
+      "route": "/product/STEAM-TOPUP-500",
+      "width": 1440,
+      "scroll": 1440,
+      "broken": []
+    },
+    {
+      "route": "/account",
+      "width": 1440,
+      "scroll": 1440,
+      "broken": []
+    },
+    {
+      "route": "/cart",
+      "width": 1440,
+      "scroll": 1440,
+      "broken": []
+    },
+    {
+      "route": "/seller/A",
+      "width": 1440,
+      "scroll": 1440,
+      "broken": []
+    },
+    {
+      "page": "seller",
+      "tab": "Мои товары",
+      "width": 390,
+      "scroll": 390
+    },
+    {
+      "page": "seller",
+      "tab": "Партии и массовые цены",
+      "width": 390,
+      "scroll": 390
+    },
+    {
+      "page": "seller",
+      "tab": "Продажи и сообщения",
+      "width": 390,
+      "scroll": 390
+    },
+    {
+      "page": "seller",
+      "tab": "Ключи и остатки",
+      "width": 390,
+      "scroll": 390
+    },
+    {
+      "page": "admin",
+      "tab": "Заказы и модерация",
+      "width": 390,
+      "scroll": 390
+    },
+    {
+      "page": "admin",
+      "tab": "Ключи и остатки",
+      "width": 390,
+      "scroll": 390
+    },
+    {
+      "page": "admin",
+      "tab": "Платёжные коды",
+      "width": 390,
+      "scroll": 390
+    },
+    {
+      "page": "admin",
+      "tab": "Продавцы",
+      "width": 390,
+      "scroll": 390
+    },
+    {
+      "page": "admin",
+      "tab": "Надёжность",
+      "width": 390,
+      "scroll": 390
+    }
+  ],
+  "errors": []
+}

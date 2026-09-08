@@ -1,0 +1,13 @@
+{
+  "passed": true,
+  "checks": [
+    "card withdrawal reserve and success",
+    "crypto withdrawal failure releases reserve",
+    "crypto withdrawal success",
+    "withdrawal history survives reload",
+    "account balance agrees with API",
+    "360/390/768/1440 layout",
+    "Demo Refund is clearly labelled"
+  ],
+  "browser_errors": []
+}

@@ -8,6 +8,15 @@ export function authorizationHeaders(): Record<string, string> {
   return token ? { authorization: `Bearer ${token}` } : {};
 }
 
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    public status: number,
+  ) {
+    super(message);
+  }
+}
+
 export async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${apiBase}${path}`, {
     ...init,
@@ -16,7 +25,7 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const body = await response.json().catch(() => ({}));
   if (!response.ok) {
     const message = typeof body?.error === 'string' ? body.error : `HTTP ${response.status}`;
-    throw new Error(message);
+    throw new ApiError(message, response.status);
   }
   return body as T;
 }
