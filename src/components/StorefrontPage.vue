@@ -1,179 +1,283 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
+import { computed, onMounted, onBeforeUnmount, ref, watch } from 'vue';
 import { Icon } from '@iconify/vue';
-import steamIcon from '@iconify-icons/logos/steam';
-import telegramIcon from '@iconify-icons/logos/telegram';
-import appStoreIcon from '@iconify-icons/logos/apple-app-store';
-import openaiIcon from '@iconify-icons/logos/openai-icon';
-import tiktokIcon from '@iconify-icons/logos/tiktok-icon';
-import robloxIcon from '@iconify-icons/arcticons/roblox';
-import brawlStarsIcon from '@iconify-icons/arcticons/brawlstars';
-import pubgIcon from '@iconify-icons/arcticons/pubg-mobile';
-import playstationIcon from '@iconify-icons/arcticons/playstation-family';
-import mobileLegendsIcon from '@iconify-icons/arcticons/mobile-legends-bang-bang';
-import { CircleEllipsis } from '@lucide/vue';
+import steam from '@iconify-icons/logos/steam';
+import discord from '@iconify-icons/logos/discord-icon';
+import spotify from '@iconify-icons/logos/spotify-icon';
+import youtube from '@iconify-icons/logos/youtube-icon';
+import playstation from '@iconify-icons/arcticons/playstation-family';
+import xbox from '@iconify-icons/arcticons/xbox';
+import {
+  ArrowRight,
+  ArrowUpRight,
+  Check,
+  Gamepad2,
+  Gift,
+  KeyRound,
+  Search,
+  ShieldCheck,
+  Sparkles,
+  Zap,
+} from '@lucide/vue';
 import { accountUser, refreshCartCount } from '../auth';
-import { api, apiBase, authApi } from '../api';
+import { api, authApi } from '../api';
 import type { Cart, Product } from '../types';
 import SiteHeader from './SiteHeader.vue';
-
+import ProductCard from './ProductCard.vue';
 const services = [
-  { name: 'Steam', icon: steamIcon, tone: 'steam' }, { name: 'Telegram', icon: telegramIcon, tone: 'telegram' },
-  { name: 'Roblox', icon: robloxIcon, tone: 'roblox' }, { name: 'Brawl Stars', icon: brawlStarsIcon, tone: 'brawl' },
-  { name: 'PUBG Mobile', icon: pubgIcon, tone: 'pubg' }, { name: 'App Store', icon: appStoreIcon, tone: 'appstore' },
-  { name: 'ChatGPT', icon: openaiIcon, tone: 'chatgpt' }, { name: 'PlayStation', icon: playstationIcon, tone: 'playstation' },
-  { name: 'TikTok', icon: tiktokIcon, tone: 'tiktok' }, { name: 'Mobile Legends', icon: mobileLegendsIcon, tone: 'mobile' },
+  { name: 'Steam', icon: steam, q: 'Steam' },
+  { name: 'PlayStation', icon: playstation, q: 'PlayStation' },
+  { name: 'Xbox', icon: xbox, q: 'Xbox' },
+  { name: 'Discord', icon: discord, q: 'Discord' },
+  { name: 'Spotify', icon: spotify, q: 'Spotify' },
+  { name: 'YouTube', icon: youtube, q: 'YouTube' },
 ];
-const categoryFilters = [
-  { value: '', label: 'Донат' }, { value: 'subscription', label: 'Подписки' },
-  { value: 'topup', label: 'Пополнения' }, { value: 'giftcard', label: 'Подарочные карты' },
-  { value: 'key', label: 'Ключи' },
+const categories = [
+  { value: '', label: 'Все товары' },
+  { value: 'key', label: 'Ключи игр' },
+  { value: 'topup', label: 'Пополнения' },
+  { value: 'subscription', label: 'Подписки' },
+  { value: 'giftcard', label: 'Подарочные карты' },
 ];
-
 const products = ref<Product[]>([]);
 const search = ref(new URLSearchParams(window.location.search).get('q') ?? '');
 const activeType = ref('');
+const sort = ref('default');
 const busySku = ref('');
 const notice = ref('');
 const error = ref('');
-const steamLogin = ref('');
-
-const availableTotal = computed(() => products.value.reduce((sum, product) => sum + product.available, 0));
-const filteredProducts = computed(() => {
-  const needle = search.value.trim().toLowerCase();
-  return products.value.filter((product) => (!activeType.value || product.type === activeType.value)
-    && (!needle || `${product.name} ${product.sku}`.toLowerCase().includes(needle)));
-});
-const quickProduct = computed(() => products.value.find((product) => product.sku === 'STEAM-TOPUP-500'));
-
-function money(value: number): string {
-  return new Intl.NumberFormat('ru-RU').format(value) + ' ₽';
-}
-
-function sectionProducts(offset: number): Product[] {
-  const source = filteredProducts.value;
-  if (!source.length) return [];
-  return Array.from({ length: Math.min(5, source.length) }, (_, index) => source[(offset + index) % source.length]);
-}
-
-function productHref(product: Product): string {
-  return `/product/${encodeURIComponent(product.sku)}`;
-}
-
-async function addToCart(product: Product): Promise<void> {
-  notice.value = '';
+const loading = ref(true);
+let timer: number | undefined;
+let noticeTimer: number | undefined;
+let version = 0;
+const featured = computed(() => products.value.find((p) => p.sku === 'STEAM-TOPUP-500'));
+async function loadCatalog() {
+  const current = ++version;
+  loading.value = true;
   error.value = '';
+  try {
+    const query = new URLSearchParams({
+      limit: '100',
+      type: activeType.value,
+      search: search.value,
+      sort: sort.value,
+    });
+    const result = await api<{ items: Product[] }>(`/api/catalog?${query}`);
+    if (current === version) products.value = result.items;
+  } catch {
+    if (current === version) error.value = 'Не удалось загрузить товары. Попробуйте ещё раз.';
+  } finally {
+    if (current === version) loading.value = false;
+  }
+}
+async function addToCart(product: Product) {
   if (!accountUser.value) {
-    window.location.href = `/account?next=${encodeURIComponent(window.location.pathname)}`;
+    window.location.href = `/account?next=${encodeURIComponent(`/product/${product.sku}`)}`;
     return;
   }
   busySku.value = product.sku;
+  error.value = '';
   try {
-    const cart = await authApi<Cart>('/api/cart/items', {
-      method: 'POST', body: JSON.stringify({ sku: product.sku, quantity: 1 }),
+    await authApi<Cart>('/api/cart/items', {
+      method: 'POST',
+      body: JSON.stringify({ sku: product.sku, quantity: 1 }),
     });
     await refreshCartCount();
-    notice.value = `${product.name} добавлен в корзину. В корзине: ${cart.item_count}.`;
-  } catch (caught) {
-    error.value = (caught as Error).message;
+    notice.value = `${product.name} — в корзине`;
+    window.clearTimeout(noticeTimer);
+    noticeTimer = window.setTimeout(() => (notice.value = ''), 4500);
+  } catch {
+    error.value = 'Не удалось добавить товар. Проверьте количество в корзине и попробуйте снова.';
   } finally {
     busySku.value = '';
   }
 }
-
-onMounted(async () => {
-  document.title = 'Game Goods — цифровые товары';
-  try {
-    const result = await api<{ items: Product[] }>('/api/catalog?limit=100');
-    products.value = result.items;
-  } catch (caught) {
-    error.value = `API недоступен (${apiBase || 'same origin'}): ${(caught as Error).message}`;
-  }
+function selectService(q: string) {
+  activeType.value = '';
+  search.value = q;
+  document.getElementById('catalog')?.scrollIntoView({ behavior: 'smooth' });
+}
+watch([search, activeType, sort], () => {
+  window.clearTimeout(timer);
+  timer = window.setTimeout(loadCatalog, 220);
+});
+onMounted(() => {
+  document.title = 'Game Goods — твой следующий уровень игры';
+  void loadCatalog();
+});
+onBeforeUnmount(() => {
+  version++;
+  window.clearTimeout(timer);
+  window.clearTimeout(noticeTimer);
 });
 </script>
-
 <template>
   <div class="store-bg">
     <div class="storefront">
       <SiteHeader v-model="search" />
-
       <main class="store-main">
-        <div v-if="notice" class="store-toast success">{{ notice }} <a href="/cart">Открыть корзину</a></div>
-        <div v-if="error" class="store-toast error">{{ error }}</div>
-
-        <section class="reference-hero" aria-label="Промо-баннер">
-          <button class="hero-arrows" type="button" aria-label="Следующий баннер">← &nbsp;&nbsp; →</button>
-          <div class="hero-dots"><i class="active"></i><i></i><i></i><i></i><i></i><i></i></div>
-        </section>
-
-        <section class="services-strip" aria-label="Популярные сервисы">
-          <article v-for="service in services" :key="service.name" class="service-item">
-            <div class="service-icon" :data-tone="service.tone"><Icon :icon="service.icon" aria-hidden="true" /></div>
-            <strong>{{ service.name }}</strong>
-          </article>
-          <article class="service-item more-service"><div class="service-icon"><CircleEllipsis :size="22" aria-hidden="true" /></div><strong>ещё 841</strong></article>
-        </section>
-
-        <form v-if="quickProduct" class="quick-payment" @submit.prevent="addToCart(quickProduct)">
-          <div class="quick-service-icon"><Icon :icon="steamIcon" aria-hidden="true" /></div>
-          <div class="quick-title"><strong>Пополнение Steam <em>5%</em></strong><button type="button">Ввести промокод⌄</button></div>
-          <label class="quick-field"><span>♟</span><input v-model="steamLogin" placeholder="Логин Steam"><i>i</i></label>
-          <div class="quick-field amount-field"><span>●</span><label><small>Сумма</small><b>500₽</b></label><i>$</i><i>₽</i></div>
-          <button class="quick-pay" type="submit" :disabled="Boolean(busySku)">{{ busySku ? 'Добавляем…' : 'В корзину за 500₽' }}</button>
-        </form>
-
-        <div class="category-row">
-          <h2>Популярные товары</h2>
-          <div class="category-pills">
-            <button v-for="category in categoryFilters" :key="category.value" type="button" :class="{ active: activeType === category.value }" @click="activeType = category.value">{{ category.label }}</button>
-          </div>
+        <div v-if="notice" role="status" class="store-toast success">
+          <Check :size="18" />{{ notice }}<a href="/cart">Открыть <ArrowUpRight :size="14" /></a>
         </div>
-
-        <section v-if="filteredProducts.length" class="product-section">
-          <div class="ref-product-grid">
-            <article v-for="product in sectionProducts(0)" :key="`popular-${product.sku}`" class="ref-product-card">
-              <a :href="productHref(product)" class="product-link"><div class="cover reference-cover"><span v-if="product.available === 0">Нет в наличии</span></div><div class="card-body"><small>💥 {{ product.type.toUpperCase() }} • STEAM KEY 🔑</small><h3>{{ product.name }}</h3><div class="card-price"><b>{{ money(product.price) }}</b><del>{{ money(Math.round(product.price * 1.9)) }}</del></div></div></a>
-              <button class="card-cart-button" :disabled="Boolean(busySku) || product.available === 0" @click="addToCart(product)">{{ busySku === product.sku ? 'Добавляем…' : 'В корзину' }}</button>
+        <div class="store-eyebrow">
+          <span><span class="live-dot"></span> МАЛЕНЬКАЯ ПОКУПКА. БОЛЬШОЕ ПРИКЛЮЧЕНИЕ.</span
+          ><span>Игры / Подписки / Пополнения</span>
+        </div>
+        <section class="hero-layout">
+          <div class="main-hero">
+            <div class="hero-copy">
+              <span class="hero-kicker"><Sparkles :size="14" /> ТВОЙ МИР БЕЗ ОГРАНИЧЕНИЙ</span>
+              <h1>Твой следующий<br /><em>уровень игры.</em></h1>
+              <p>
+                Ключи к новым мирам, любимые подписки<br class="desktop-break" />
+                и пополнения — всё в одном месте.
+              </p>
+              <a href="#catalog" class="primary-link">Найти своё <ArrowUpRight :size="20" /></a>
+              <div class="hero-benefits">
+                <span><Zap :size="14" />Автоматическая выдача</span
+                ><span><ShieldCheck :size="14" />Проверенные коды</span>
+              </div>
+            </div>
+            <div class="hero-art" aria-hidden="true">
+              <div class="orbit orbit-one"></div>
+              <div class="orbit orbit-two"></div>
+              <div class="art-spark spark-one">+</div>
+              <div class="art-spark spark-two">+</div>
+              <div class="floating-card back-card">
+                <Gamepad2 :size="65" /><span>PLAY WITHOUT LIMITS</span>
+              </div>
+              <div class="floating-card front-card">
+                <span class="card-topline">DIGITAL GIFT CARD <ArrowUpRight :size="15" /></span
+                ><Icon :icon="steam" class="hero-steam" /><strong>STEAM</strong>
+                <div class="card-bottomline"><span>WALLET CODE</span><b>500 ₽</b></div>
+              </div>
+              <div class="verified-float">
+                <span><Check :size="16" /></span>
+                <div>Можно играть<small>Ключ проверен</small></div>
+              </div>
+            </div>
+          </div>
+          <aside class="bonus-card">
+            <span class="bonus-icon"><Gift :size="25" /></span
+            ><span class="bonus-kicker">ХОРОШЕЕ НАЧАЛО</span>
+            <h2>5 000<span>приветственных баллов</span></h2>
+            <p>Создай аккаунт и попробуй<br />свою первую покупку.</p>
+            <a href="/account"
+              >{{ accountUser ? 'Мой аккаунт' : 'Забрать бонус' }}<ArrowUpRight :size="18" /></a
+            ><small>Начисляются при регистрации</small>
+          </aside>
+        </section>
+        <section class="platforms" aria-label="Популярные платформы">
+          <button v-for="service in services" :key="service.name" @click="selectService(service.q)">
+            <Icon :icon="service.icon" /><span>{{ service.name }}</span
+            ><ArrowUpRight :size="14" />
+          </button>
+        </section>
+        <section id="catalog" class="catalog-section">
+          <header class="catalog-heading">
+            <div>
+              <span class="section-kicker">ВЫБИРАЙ СВОЁ</span>
+              <h2>Всё для твоего digital-мира<span class="accent-dot">.</span></h2>
+            </div>
+            <span class="catalog-quantity">{{ products.length }} товаров</span>
+          </header>
+          <div class="catalog-toolbar">
+            <div class="category-pills" aria-label="Категории">
+              <button
+                v-for="category in categories"
+                :key="category.value"
+                :class="{ active: activeType === category.value }"
+                :aria-pressed="activeType === category.value"
+                @click="activeType = category.value"
+              >
+                {{ category.label }}
+              </button>
+            </div>
+            <select v-model="sort" aria-label="Сортировка товаров">
+              <option value="default">По умолчанию</option>
+              <option value="price_asc">Сначала дешевле</option>
+              <option value="price_desc">Сначала дороже</option>
+            </select>
+          </div>
+          <div v-if="error" class="catalog-empty" role="alert">
+            <ShieldCheck :size="32" />
+            <h3>Небольшая пауза</h3>
+            <p>{{ error }}</p>
+            <button @click="loadCatalog">Попробовать снова</button>
+          </div>
+          <div v-else-if="loading" class="product-grid" aria-label="Загрузка товаров">
+            <div v-for="n in 8" :key="n" class="product-skeleton"></div>
+          </div>
+          <div v-else-if="products.length" class="product-grid">
+            <ProductCard
+              v-for="product in products"
+              :key="product.sku"
+              :product="product"
+              :busy="busySku === product.sku"
+              @add="addToCart"
+            />
+          </div>
+          <div v-else class="catalog-empty">
+            <Search :size="34" />
+            <h3>Пока ничего не нашли</h3>
+            <p>Попробуй другой запрос или открой все категории.</p>
+            <button
+              @click="
+                search = '';
+                activeType = '';
+              "
+            >
+              Сбросить фильтры
+            </button>
+          </div>
+        </section>
+        <section v-if="featured" class="steam-banner">
+          <div class="steam-banner-icon"><Icon :icon="steam" /></div>
+          <div>
+            <span class="section-kicker">ЕЩЁ БОЛЬШЕ ВОЗМОЖНОСТЕЙ</span>
+            <h2>В списке желаемого что-то осталось?</h2>
+            <p>Пополни Steam и забери игру, которую давно хотел.</p>
+          </div>
+          <a :href="`/product/${featured.sku}`">Пополнить Steam<ArrowRight :size="18" /></a>
+        </section>
+        <section id="how-it-works" class="how-section">
+          <header class="catalog-heading">
+            <div>
+              <span class="section-kicker">ПРОСТО. ПОНЯТНО. ТВОЁ.</span>
+              <h2>От выбора до игры — три шага</h2>
+            </div>
+          </header>
+          <div class="how-grid">
+            <article>
+              <span class="step-number">01</span><Gamepad2 :size="23" />
+              <h3>Найди своё</h3>
+              <p>Выбери игры и сервисы. Добавь всё нужное в одну корзину.</p>
+            </article>
+            <article>
+              <span class="step-number">02</span><ShieldCheck :size="23" />
+              <h3>Оплати баллами</h3>
+              <p>Используй баланс или платёжный код. Сумму увидишь до покупки.</p>
+            </article>
+            <article>
+              <span class="step-number">03</span><KeyRound :size="23" />
+              <h3>Забери свои ключи</h3>
+              <p>Коды сохранятся в кабинете. За невыданный товар вернём баллы.</p>
             </article>
           </div>
         </section>
-        <div v-else class="empty-search">По этому запросу товаров не найдено.</div>
-
-        <section v-if="filteredProducts.length" class="product-section">
-          <div class="section-title"><h2>Рекомендованные товары</h2><button type="button">Показать все</button></div>
-          <div class="ref-product-grid">
-            <article v-for="product in sectionProducts(5)" :key="`recommended-${product.sku}`" class="ref-product-card">
-              <a :href="productHref(product)" class="product-link"><div class="cover reference-cover"></div><div class="card-body"><small>💥 {{ product.type.toUpperCase() }} • STEAM KEY 🔑</small><h3>{{ product.name }}</h3><div class="card-price"><b>{{ money(product.price) }}</b><del>{{ money(Math.round(product.price * 1.9)) }}</del></div></div></a>
-              <button class="card-cart-button" :disabled="Boolean(busySku) || product.available === 0" @click="addToCart(product)">{{ busySku === product.sku ? 'Добавляем…' : 'В корзину' }}</button>
-            </article>
-          </div>
-        </section>
-
-        <section v-if="filteredProducts.length" class="product-section other-products">
-          <div class="section-title"><h2>Другие товары</h2><button type="button">Показать все</button></div>
-          <div class="ref-product-grid">
-            <article v-for="product in sectionProducts(10)" :key="`other-${product.sku}`" class="ref-product-card">
-              <a :href="productHref(product)" class="product-link"><div class="cover reference-cover"></div><div class="card-body"><small>💥 {{ product.type.toUpperCase() }} • STEAM KEY 🔑</small><h3>{{ product.name }}</h3><div class="card-price"><b>{{ money(product.price) }}</b><del>{{ money(Math.round(product.price * 1.9)) }}</del></div></div></a>
-              <button class="card-cart-button" :disabled="Boolean(busySku) || product.available === 0" @click="addToCart(product)">{{ busySku === product.sku ? 'Добавляем…' : 'В корзину' }}</button>
-            </article>
-          </div>
-        </section>
-
-        <section class="reviews-section">
-          <div class="section-title"><div><h2>Последние отзывы</h2><p>Все отзывы взяты с независимой площадки</p></div><button type="button">Показать все</button></div>
-          <div class="reviews-grid">
-            <article v-for="index in 3" :key="index" class="review-card">
-              <header><div class="avatar">B</div><div><b>Bizidin</b><span>★★★★★ &nbsp; 5.0</span></div><time>Сегодня в 11:48</time></header>
-              <p>Отзывчивый и приятный продавец, помог не только с товаром, но и с другим вопросом. Рекомендую!</p>
-              <footer><div class="review-thumb reference-cover"></div><strong>FunTime | Полностью готовый сервер под ключ 🔑</strong><b>139₽</b></footer>
-            </article>
-          </div>
-        </section>
-
         <footer class="store-footer">
-          <nav><a href="#">Стать продавцом</a><a href="#">Бонусы</a><a href="#">Поддержка</a><a href="#">Гарантии</a><a href="#">Отзывы</a></nav>
-          <div class="footer-middle"><div class="socials"><span>VK</span><span>➤</span><span>♪</span><span>▶</span></div><div class="payments"><b>VISA</b><b>МИР</b><b>●●</b></div></div>
-          <nav class="legal"><a href="#">Политика конфиденциальности</a><a href="#">Соглашение</a><a href="#">Договор-оферта</a><span>В наличии: {{ availableTotal }} ключей</span></nav>
+          <div>
+            <a href="/" class="footer-brand">game<span>goods</span></a>
+            <p>Больше игры. Больше впечатлений.</p>
+          </div>
+          <nav>
+            <a href="/#catalog">Каталог</a><a href="/account">Мои покупки</a><a href="/cart">Корзина</a
+            ><a href="#how-it-works">Как это работает</a>
+          </nav>
+          <div class="footer-bottom">
+            <span>© 2026 Game Goods</span><span>Учебный магазин · Все платежи и коды эмулируются</span
+            ><span>Сделано для тех, кто играет <Gamepad2 :size="14" /></span>
+          </div>
         </footer>
       </main>
     </div>

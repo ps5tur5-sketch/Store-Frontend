@@ -1,212 +1,352 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { ArrowRight, ShoppingBag, ShieldCheck, Trash2, Minus, Plus } from '@lucide/vue';
 import { accountUser, authReady, refreshAccount, refreshCartCount } from '../auth';
-import { authApi } from '../api';
-import type { Cart, CartQuote, Purchase } from '../types';
+import { api, authApi, ApiError } from '../api';
+import type { Cart, CartQuote, Purchase, CheckoutResult, OrderGroup, PaymentMethod } from '../types';
+import { points, typeLabels } from '../format';
 import PurchaseModal from './PurchaseModal.vue';
+import OrderProgress from './OrderProgress.vue';
 import SiteHeader from './SiteHeader.vue';
-
-const search = ref('');
+const method = ref<'balance' | 'sbp' | 'crypto'>('balance');
+const methods = ref<PaymentMethod[]>([]);
+const search = ref(''),
+  paymentCode = ref(''),
+  error = ref('');
 const cart = ref<Cart>({ items: [], item_count: 0, total_points: 0 });
-const paymentCode = ref('');
-const busy = ref(false);
-const error = ref('');
-const checkoutResult = ref<{ order_ids: string[]; total_points: number; balance_after: number }>();
-const purchased = ref<Purchase[]>([]);
-const popupIndex = ref(0);
+const busy = ref(false),
+  quoteBusy = ref(false),
+  loading = ref(true);
 const quote = ref<CartQuote>();
-const quoteBusy = ref(false);
-let quoteTimer: number | undefined;
-const usesPaymentCode = computed(() => Boolean(paymentCode.value.trim()));
-const normalizedPaymentCode = computed(() => paymentCode.value.trim().toUpperCase());
-const quoteMatchesInput = computed(() => Boolean(quote.value && quote.value.code === normalizedPaymentCode.value));
-const validCodeQuote = computed(() => quoteMatchesInput.value && quote.value?.code_status === 'valid');
-const pointsToCharge = computed(() => validCodeQuote.value ? quote.value!.points_to_charge : cart.value.total_points);
-const balanceAfterPreview = computed(() => accountUser.value
-  ? accountUser.value.points_balance - pointsToCharge.value
-  : 0);
-const canCheckout = computed(() => {
-  if (!cart.value.items.length || busy.value || quoteBusy.value) return false;
-  if (!usesPaymentCode.value) return balanceAfterPreview.value >= 0;
-  return Boolean(validCodeQuote.value && quote.value?.can_checkout);
-});
-const quoteMessage = computed(() => {
-  if (!usesPaymentCode.value) return '';
-  if (normalizedPaymentCode.value.length < 4) return 'Введите код полностью.';
-  if (quoteBusy.value) return 'Проверяем код и его номинал в базе…';
-  if (!quoteMatchesInput.value) return '';
-  if (quote.value?.code_status === 'not_found') return checkoutErrors.payment_code_not_found;
-  if (quote.value?.code_status === 'used') return checkoutErrors.payment_code_already_used;
-  if (quote.value?.error === 'insufficient_points') {
-    const source = quote.value.code_source_name ? ` для товара «${quote.value.code_source_name}»` : '';
-    return `Код${source} действителен, его номинал ${money(quote.value.code_value_points)}, но баланса не хватает для оплаты остатка.`;
-  }
-  if (quote.value?.code_status === 'valid') {
-    const source = quote.value.code_source_name ? ` Код добавлен для товара «${quote.value.code_source_name}».` : '';
-    return `Код действителен. Номинал: ${money(quote.value.code_value_points)}.${source}`;
-  }
-  return '';
-});
-
+const order = ref<OrderGroup>();
+const selected = ref<Purchase>();
+const pendingCheckout = ref(false);
+let quoteTimer: number | undefined, pollTimer: number | undefined;
+let quoteVersion = 0,
+  disposed = false;
 const checkoutErrors: Record<string, string> = {
-  payment_code_not_found: 'Такого платёжного кода нет в базе. Проверьте ввод или используйте код из списка ТЗ.',
-  payment_code_already_used: 'Этот платёжный код уже использован. Введите другой код.',
-  insufficient_points: 'На балансе недостаточно баллов. Введите платёжный код или уменьшите корзину.',
+  cart_offer_unavailable:
+    'Партия отключена, свободных ключей недостаточно или магазин заблокирован. Проверьте количество и выберите доступное предложение.',
+  payment_code_not_found: 'Платёжный код не найден. Проверьте ввод.',
+  payment_code_already_used: 'Этот код уже использован.',
+  insufficient_points:
+    'На балансе недостаточно средств. Пополните его в личном кабинете или выберите СБП / криптовалюту.',
   cart_is_empty: 'Корзина пуста.',
+  lot_insufficient_stock:
+    'Ключи этой партии уже заняты другим заказом. Обновите корзину и выберите доступную партию.',
+  checkout_id_payload_conflict: 'Параметры покупки изменились. Обновите страницу, чтобы восстановить заказ.',
 };
-
-function money(value: number): string {
-  return new Intl.NumberFormat('ru-RU').format(value) + ' баллов';
-}
-
-async function loadCart(): Promise<void> {
-  if (!accountUser.value) return;
-  cart.value = await authApi<Cart>('/api/cart');
-  await refreshCartCount();
-  if (usesPaymentCode.value) await loadQuote();
-}
-
-async function loadQuote(): Promise<void> {
-  const code = normalizedPaymentCode.value;
-  if (!accountUser.value || code.length < 4) {
-    quote.value = undefined;
-    quoteBusy.value = false;
-    return;
-  }
+const canCheckout = computed(() => Boolean(quote.value?.can_checkout && !busy.value && !quoteBusy.value));
+const pendingKey = () => `game_goods_pending_checkout:${accountUser.value?.id}`;
+async function loadQuote() {
+  const current = ++quoteVersion;
   quoteBusy.value = true;
+  quote.value = undefined;
   try {
     const result = await authApi<CartQuote>('/api/cart/quote', {
-      method: 'POST', body: JSON.stringify({ code }),
-    });
-    if (normalizedPaymentCode.value === code) quote.value = result;
-  } catch (caught) {
-    if (normalizedPaymentCode.value === code) {
-      const message = (caught as Error).message;
-      error.value = checkoutErrors[message] ?? message;
-      quote.value = undefined;
-    }
-  } finally {
-    if (normalizedPaymentCode.value === code) quoteBusy.value = false;
-  }
-}
-
-function scheduleQuote(): void {
-  if (quoteTimer) window.clearTimeout(quoteTimer);
-  quote.value = undefined;
-  error.value = '';
-  if (!usesPaymentCode.value || normalizedPaymentCode.value.length < 4) {
-    quoteBusy.value = false;
-    return;
-  }
-  quoteBusy.value = true;
-  quoteTimer = window.setTimeout(loadQuote, 300);
-}
-
-async function setQuantity(sku: string, quantity: number): Promise<void> {
-  if (quantity < 1) return removeItem(sku);
-  cart.value = await authApi<Cart>(`/api/cart/items/${encodeURIComponent(sku)}`, {
-    method: 'PUT', body: JSON.stringify({ quantity }),
-  });
-  await refreshCartCount();
-  if (usesPaymentCode.value) await loadQuote();
-}
-
-async function removeItem(sku: string): Promise<void> {
-  cart.value = await authApi<Cart>(`/api/cart/items/${encodeURIComponent(sku)}`, { method: 'DELETE' });
-  await refreshCartCount();
-  if (usesPaymentCode.value) await loadQuote();
-}
-
-async function checkout(): Promise<void> {
-  error.value = '';
-  busy.value = true;
-  try {
-    const result = await authApi<{ order_ids: string[]; total_points: number; code_value_points: number; code_applied_points: number; points_charged: number; balance_after: number }>('/api/cart/checkout', {
       method: 'POST',
       body: JSON.stringify({
-        checkout_id: `chk_${crypto.randomUUID().replaceAll('-', '')}`,
-        ...(paymentCode.value.trim() ? { code: paymentCode.value.trim() } : {}),
+        method: method.value,
+        code: method.value === 'balance' ? paymentCode.value.trim() || undefined : undefined,
       }),
     });
-    checkoutResult.value = result;
-    cart.value = { items: [], item_count: 0, total_points: 0 };
-    await Promise.all([refreshAccount(), refreshCartCount()]);
-    purchased.value = [];
-    for (const orderId of result.order_ids) {
-      let detail: Purchase | undefined;
-      for (let attempt = 0; attempt < 24; attempt += 1) {
-        detail = await authApi<Purchase>(`/api/account/purchases/${encodeURIComponent(orderId)}`);
-        if (detail.status === 'delivered' || ['out_of_stock', 'delivery_failed'].includes(detail.status)) break;
-        await new Promise((resolve) => window.setTimeout(resolve, 250));
-      }
-      if (detail) purchased.value.push(detail);
-    }
-    popupIndex.value = 0;
+    if (current === quoteVersion) quote.value = result;
   } catch (caught) {
-    const message = (caught as Error).message;
-    error.value = checkoutErrors[message] ?? message;
+    if (current === quoteVersion)
+      error.value =
+        checkoutErrors[(caught as Error).message] ?? 'Не удалось рассчитать заказ. Попробуйте снова.';
+  } finally {
+    if (current === quoteVersion) quoteBusy.value = false;
+  }
+}
+async function loadCart() {
+  cart.value = await authApi<Cart>('/api/cart');
+  await loadQuote();
+}
+async function changeItem(sku: string, quantity: number, provider: string, offerId: string) {
+  if (busy.value || pendingCheckout.value) return;
+  busy.value = true;
+  error.value = '';
+  try {
+    cart.value = await authApi<Cart>(
+      `/api/cart/items/${encodeURIComponent(sku)}?provider=${encodeURIComponent(provider)}&offer_id=${encodeURIComponent(offerId)}`,
+      {
+        method: quantity === 0 ? 'DELETE' : 'PUT',
+        ...(quantity ? { body: JSON.stringify({ quantity }) } : {}),
+      },
+    );
+    await Promise.all([refreshCartCount(), loadQuote()]);
+  } catch {
+    error.value = 'Не удалось обновить корзину. Попробуйте снова.';
   } finally {
     busy.value = false;
   }
 }
-
-async function refreshPopup(): Promise<void> {
-  const current = purchased.value[popupIndex.value];
-  if (!current) return;
-  purchased.value[popupIndex.value] = await authApi<Purchase>(`/api/account/purchases/${encodeURIComponent(current.id)}`);
+async function pollOrder() {
+  if (disposed || !order.value) return;
+  try {
+    order.value = await authApi<OrderGroup>(`/api/account/orders/${encodeURIComponent(order.value.id)}`);
+    if (order.value.terminal) {
+      await refreshAccount();
+      if (order.value.status === 'refunded') return;
+    }
+  } catch {
+    error.value = 'Не удалось обновить статус. Заказ сохранён, пробуем снова.';
+  }
+  if (!disposed) pollTimer = window.setTimeout(pollOrder, order.value?.terminal ? 5000 : 1500);
 }
-
+async function checkout() {
+  if (busy.value) return;
+  busy.value = true;
+  error.value = '';
+  const saved = sessionStorage.getItem(pendingKey());
+  const body =
+    saved ||
+    JSON.stringify({
+      checkout_id: `chk_${crypto.randomUUID().replaceAll('-', '')}`,
+      method: method.value,
+      code: method.value === 'balance' ? paymentCode.value.trim() || undefined : undefined,
+    });
+  sessionStorage.setItem(pendingKey(), body);
+  pendingCheckout.value = true;
+  try {
+    const result = await authApi<CheckoutResult>('/api/cart/checkout', { method: 'POST', body });
+    order.value = result.order;
+    history.replaceState(null, '', `/cart?order=${encodeURIComponent(result.order_id)}`);
+    sessionStorage.removeItem(pendingKey());
+    pendingCheckout.value = false;
+    await Promise.all([refreshAccount(), refreshCartCount()]);
+    await pollOrder();
+  } catch (caught) {
+    if (caught instanceof ApiError && caught.status < 500) {
+      sessionStorage.removeItem(pendingKey());
+      pendingCheckout.value = false;
+    }
+    error.value =
+      checkoutErrors[(caught as Error).message] ??
+      'Ответ не получен. Нажмите «Проверить покупку»: повтор не спишет баллы дважды.';
+  } finally {
+    busy.value = false;
+  }
+}
+async function openPurchase(id: string) {
+  try {
+    selected.value = await authApi<Purchase>(`/api/account/purchases/${encodeURIComponent(id)}`);
+  } catch {
+    error.value = 'Не удалось открыть покупку.';
+  }
+}
+watch([paymentCode, method], () => {
+  quoteVersion++;
+  quote.value = undefined;
+  quoteBusy.value = true;
+  window.clearTimeout(quoteTimer);
+  quoteTimer = window.setTimeout(loadQuote, 300);
+});
 onMounted(async () => {
   document.title = 'Корзина — Game Goods';
-  if (!authReady.value) await refreshAccount();
-  if (accountUser.value) await loadCart();
+  try {
+    if (!authReady.value) await refreshAccount();
+    methods.value = (await api<{ methods: PaymentMethod[] }>('/api/payment-methods')).methods;
+    if (accountUser.value?.can_buy) {
+      const savedOrder = new URLSearchParams(location.search).get('order');
+      if (savedOrder) {
+        order.value = await authApi<OrderGroup>(`/api/account/orders/${encodeURIComponent(savedOrder)}`);
+        await pollOrder();
+      } else if (sessionStorage.getItem(pendingKey())) await checkout();
+      if (!order.value) await loadCart();
+    }
+  } catch {
+    error.value = 'Не удалось загрузить корзину. Обновите страницу.';
+  } finally {
+    loading.value = false;
+  }
 });
-
-watch(paymentCode, scheduleQuote);
-onBeforeUnmount(() => { if (quoteTimer) window.clearTimeout(quoteTimer); });
+onBeforeUnmount(() => {
+  disposed = true;
+  quoteVersion++;
+  window.clearTimeout(quoteTimer);
+  window.clearTimeout(pollTimer);
+});
 </script>
-
 <template>
-  <div class="store-bg"><div class="storefront site-page">
-    <SiteHeader v-model="search" />
-    <main class="inner-page">
-      <nav class="breadcrumbs"><a href="/">Каталог</a><span>›</span><span>Корзина</span></nav>
-      <div class="page-title-row"><div><small>ВАШ ЗАКАЗ</small><h1>Корзина</h1><p>Сначала товары попадают сюда. Оплата выполняется только из корзины.</p></div><span class="cart-count-large">{{ cart.item_count }}</span></div>
-
-      <section v-if="authReady && !accountUser" class="auth-required"><div class="auth-lock">●</div><h2>Сначала войдите в аккаунт</h2><p>Корзина хранится на сервере и привязана к логину.</p><a href="/account?next=/cart">Войти или зарегистрироваться</a></section>
-
-      <section v-else-if="checkoutResult" class="checkout-complete"><span>✓</span><h2>Покупка оформлена</h2><p>Создано заказов: {{ checkoutResult.order_ids.length }}. Выдача выполняется автоматически.</p><strong>Остаток: {{ money(checkoutResult.balance_after) }}</strong><a href="/account">Открыть список покупок</a></section>
-
-      <div v-else-if="accountUser" class="cart-layout">
-        <section class="cart-items-panel">
-          <div v-if="!cart.items.length" class="empty-cart"><h2>Корзина пуста</h2><p>Откройте карточку товара и добавьте его сюда.</p><a href="/">Перейти в каталог</a></div>
-          <article v-for="item in cart.items" :key="item.sku" class="cart-line">
-            <a :href="`/product/${encodeURIComponent(item.sku)}`" class="cart-thumb reference-cover"></a>
-            <div class="cart-product"><span>{{ item.type }}</span><a :href="`/product/${encodeURIComponent(item.sku)}`">{{ item.name }}</a><code>{{ item.sku }}</code></div>
-            <div class="quantity-control"><button @click="setQuantity(item.sku, item.quantity - 1)">−</button><b>{{ item.quantity }}</b><button @click="setQuantity(item.sku, item.quantity + 1)">+</button></div>
-            <strong>{{ money(item.line_total) }}</strong><button class="remove-line" @click="removeItem(item.sku)">×</button>
-          </article>
+  <div class="store-bg">
+    <div class="storefront site-page">
+      <SiteHeader v-model="search" />
+      <main class="inner-page">
+        <nav class="breadcrumbs"><a href="/">Главная</a><span>/</span><span>Корзина</span></nav>
+        <div class="page-title-row">
+          <div>
+            <span class="section-kicker">ДО НОВЫХ ВПЕЧАТЛЕНИЙ ОДИН ШАГ</span>
+            <h1>{{ order ? 'Твой заказ' : 'Корзина' }}<span class="accent-dot">.</span></h1>
+            <p>
+              {{
+                order
+                  ? 'Статус обновляется автоматически. Все покупки сохранятся в кабинете.'
+                  : 'Всё, что ты выбрал, — в одном заказе.'
+              }}
+            </p>
+          </div>
+          <ShoppingBag :size="40" />
+        </div>
+        <div v-if="error" class="inline-error" role="alert">{{ error }}</div>
+        <div v-if="loading" class="catalog-empty">Загружаем корзину…</div>
+        <section v-else-if="!accountUser" class="auth-required">
+          <ShoppingBag :size="40" />
+          <h2>Твоя корзина ждёт тебя</h2>
+          <p>Войди в аккаунт, чтобы продолжить покупки.</p>
+          <a href="/account?next=/cart">Войти или зарегистрироваться<ArrowRight :size="18" /></a>
         </section>
-
-        <aside class="checkout-panel">
-          <div class="balance-line"><span>Ваш баланс</span><strong>{{ money(accountUser.points_balance) }}</strong></div>
-          <h2>Оплата корзины</h2>
-          <label class="payment-code-field">Есть код из списка ТЗ?<input v-model="paymentCode" placeholder="Введите код вручную или оставьте поле пустым" autocomplete="off" autocapitalize="characters" spellcheck="false"><small>Например: W67T-ZB0Q-1XKB. Если поле пустое, стоимость автоматически спишется с баланса.</small></label>
-          <div v-if="quoteMessage" class="code-quote-status" :class="{ valid: validCodeQuote, invalid: quoteMatchesInput && !validCodeQuote }">{{ quoteMessage }}</div>
-          <div v-if="error" class="inline-error">{{ error }}</div>
-          <dl>
-            <div><dt>Товаров</dt><dd>{{ cart.item_count }}</dd></div>
-            <div><dt>Стоимость заказа</dt><dd>{{ money(cart.total_points) }}</dd></div>
-            <div v-if="validCodeQuote"><dt>Номинал платёжного кода</dt><dd>{{ money(quote?.code_value_points ?? 0) }}</dd></div>
-            <div v-if="validCodeQuote" class="code-coverage-row"><dt>Вычитает платёжный код</dt><dd>−{{ money(quote?.code_applied_points ?? 0) }}</dd></div>
-            <div class="checkout-total-row"><dt>К списанию с баланса</dt><dd>{{ money(pointsToCharge) }}</dd></div>
-            <div><dt>Баланс после покупки</dt><dd :class="{ 'negative-balance': balanceAfterPreview < 0 }">{{ balanceAfterPreview < 0 ? `Не хватает ${money(-balanceAfterPreview)}` : money(balanceAfterPreview) }}</dd></div>
-          </dl>
-          <button class="checkout-button" :disabled="!canCheckout" @click="checkout">{{ busy ? 'Оформляем…' : quoteBusy ? 'Проверяем код…' : validCodeQuote && pointsToCharge > 0 ? `Код + ${money(pointsToCharge)} с баланса` : validCodeQuote ? 'Оплатить кодом' : usesPaymentCode ? 'Введите действительный код' : 'Купить с баланса' }}</button>
-          <p class="checkout-note">После подтверждения каждый товар станет отдельной покупкой и появится в истории по дате.</p>
-        </aside>
-      </div>
-    </main>
-    <PurchaseModal v-if="purchased[popupIndex]" :purchase="purchased[popupIndex]!" :index="popupIndex" :total="purchased.length" @close="purchased = []" @refresh="refreshPopup" @previous="popupIndex--" @next="popupIndex++" />
-  </div></div>
+        <section v-else-if="!accountUser.can_buy" class="auth-required">
+          <h2>Покупки в аккаунте покупателя</h2>
+          <p>Сейчас вы вошли как администратор. Для покупок используйте отдельный аккаунт покупателя.</p>
+          <a href="/account">Управление аккаунтом</a>
+        </section>
+        <template v-else-if="order"
+          ><OrderProgress :order="order" @open="openPurchase" /><a class="back-purchases" href="/account"
+            >Все мои покупки <ArrowRight :size="17" /></a
+        ></template>
+        <div v-else class="cart-layout">
+          <section class="cart-items-panel">
+            <div v-if="!cart.items.length" class="empty-cart">
+              <ShoppingBag :size="40" />
+              <h2>Здесь скоро будет что-то классное</h2>
+              <p>Игры, подписки и пополнения ждут тебя в каталоге.</p>
+              <a href="/">Перейти в каталог<ArrowRight :size="18" /></a>
+            </div>
+            <article v-for="item in cart.items" :key="item.offer_id" class="cart-line">
+              <a :href="`/product/${item.sku}`" class="cart-thumb"
+                ><img :src="item.image" :alt="item.name"
+              /></a>
+              <div class="cart-product">
+                <span v-if="item.demo_notice" class="demo-scenario-notice">{{ item.demo_notice }}</span>
+                <span>{{ typeLabels[item.type] }} · {{ item.offer_name }}</span
+                ><a :href="`/product/${item.sku}`">{{ item.name }}</a
+                ><span v-if="!item.purchasable" class="seller-warning-text">Предложение недоступно</span
+                ><a class="cart-seller" :href="`/seller/${item.provider}`"
+                  >{{ item.seller_name
+                  }}<span v-if="item.seller_flag === 'red'" class="red-flag"> · Есть нарушения</span></a
+                >
+              </div>
+              <div class="quantity-control">
+                <button
+                  :disabled="busy || pendingCheckout"
+                  aria-label="Уменьшить количество"
+                  @click="changeItem(item.sku, item.quantity - 1, item.provider, item.offer_id)"
+                >
+                  <Minus :size="13" /></button
+                ><b>{{ item.quantity }}</b
+                ><button
+                  :disabled="
+                    busy || pendingCheckout || item.quantity >= 10 || item.quantity >= item.available
+                  "
+                  aria-label="Увеличить количество"
+                  @click="changeItem(item.sku, item.quantity + 1, item.provider, item.offer_id)"
+                >
+                  <Plus :size="13" />
+                </button>
+              </div>
+              <strong>{{ points(item.line_total) }}</strong
+              ><button
+                class="remove-line"
+                :disabled="busy || pendingCheckout"
+                :aria-label="`Удалить ${item.name}`"
+                @click="changeItem(item.sku, 0, item.provider, item.offer_id)"
+              >
+                <Trash2 :size="17" />
+              </button>
+            </article>
+          </section>
+          <aside class="checkout-panel">
+            <div class="balance-line">
+              <span>Твой баланс</span><strong>{{ points(accountUser.points_balance) }}</strong>
+            </div>
+            <h2>Как оплатим?</h2>
+            <fieldset class="payment-methods">
+              <legend class="sr-only">Способ оплаты</legend>
+              <label v-for="m in methods" :key="m.id" :class="{ active: method === m.id }"
+                ><input
+                  v-model="method"
+                  type="radio"
+                  :value="m.id"
+                  name="payment-method"
+                  :disabled="busy || pendingCheckout"
+                /><span
+                  ><strong>{{ m.name }}</strong
+                  ><small>{{ m.description }}</small></span
+                ></label
+              >
+            </fieldset>
+            <label v-if="method === 'balance'" class="payment-code-field"
+              >Платёжный код<input
+                v-model="paymentCode"
+                :disabled="busy || pendingCheckout"
+                placeholder="Если есть — введи сюда"
+                autocomplete="off"
+                spellcheck="false"
+              /><small>Код покроет часть покупки. Остаток спишется с баланса.</small></label
+            >
+            <p v-if="quote?.error" class="code-quote-status invalid">
+              {{ checkoutErrors[quote.error] || quote.error }}
+            </p>
+            <p v-else-if="quote?.code_status === 'valid'" class="code-quote-status valid">
+              Код принят · {{ points(quote.code_value_points) }}
+            </p>
+            <dl v-if="quote">
+              <div>
+                <dt>Товары · {{ quote.item_count }}</dt>
+                <dd>{{ points(quote.total_points) }}</dd>
+              </div>
+              <div v-if="quote.code_applied_points">
+                <dt>Оплата кодом</dt>
+                <dd>−{{ points(quote.code_applied_points) }}</dd>
+              </div>
+              <div v-if="quote.external_to_pay" class="checkout-total-row">
+                <dt>К оплате {{ method === 'sbp' ? 'через СБП' : 'криптовалютой' }}</dt>
+                <dd>{{ points(quote.external_to_pay) }}</dd>
+              </div>
+              <div v-if="method === 'balance'" class="checkout-total-row">
+                <dt>С баланса</dt>
+                <dd>{{ points(quote.points_to_charge) }}</dd>
+              </div>
+              <div>
+                <dt>Баланс после покупки</dt>
+                <dd :class="{ 'negative-balance': quote.balance_after < 0 }">
+                  {{ points(quote.balance_after) }}
+                </dd>
+              </div>
+            </dl>
+            <p v-else class="checkout-note">Рассчитываем стоимость…</p>
+            <button
+              class="checkout-button"
+              :disabled="pendingCheckout ? busy : !canCheckout"
+              @click="checkout"
+            >
+              {{
+                busy
+                  ? 'Оформляем…'
+                  : pendingCheckout
+                    ? 'Проверить покупку'
+                    : quoteBusy
+                      ? 'Рассчитываем…'
+                      : method === 'balance'
+                        ? 'Подтвердить покупку'
+                        : 'Перейти к оплате'
+              }}<ArrowRight :size="17" />
+            </button>
+            <p class="checkout-note">
+              <ShieldCheck :size="16" />Если товар не выдастся, его стоимость автоматически вернётся на баланс
+              личного кабинета.
+            </p>
+          </aside>
+        </div>
+      </main>
+      <PurchaseModal
+        v-if="selected"
+        :purchase="selected"
+        @close="selected = undefined"
+        @refresh="openPurchase(selected!.id)"
+      />
+    </div>
+  </div>
 </template>
